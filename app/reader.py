@@ -1,61 +1,53 @@
-import os
+import time
 import imaplib
 import email
 from email.header import decode_header
-import base64
-
-# Configurações
-EMAIL_SERVER = os.getenv("EMAIL_SERVER")
-EMAIL_PORT = int(os.getenv("EMAIL_PORT", 993))
-EMAIL_USER = os.getenv("EMAIL_USER")
-EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
-
-# Pasta para salvar os anexos
-DOWNLOAD_FOLDER = "./downloads"
-os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
-
-def connect_mailbox():
-    mail = imaplib.IMAP4_SSL(EMAIL_SERVER, EMAIL_PORT)
-    mail.login(EMAIL_USER, EMAIL_PASSWORD)
-    return mail
+import quopri
 
 def fetch_emails(mail):
-    mail.select("inbox")
     status, messages = mail.search(None, "ALL")
+    messages = messages[0].split()
 
-    if status != "OK":
-        print("Nenhum e-mail encontrado.")
-        return
+    for msg_num in messages:
+        res, msg_data = mail.fetch(msg_num, "(RFC822)")
+        for response_part in msg_data:
+            if isinstance(response_part, tuple):
+                msg = email.message_from_bytes(response_part[1])
 
-    for num in messages[0].split():
-        status, data = mail.fetch(num, "(RFC822)")
-        if status != "OK":
-            print(f"Erro ao buscar e-mail {num}")
-            continue
+                subject, encoding = decode_header(msg["Subject"])[0]
+                if isinstance(subject, bytes):
+                    subject = subject.decode(encoding if encoding else "utf-8")
+                print(f"Assunto: {subject}")
 
-        msg = email.message_from_bytes(data[0][1])
+                if msg.is_multipart():
+                    for part in msg.walk():
+                        content_type = part.get_content_type()
+                        content_disposition = str(part.get("Content-Disposition"))
 
-        for part in msg.walk():
-            if part.get_content_maintype() == 'multipart':
-                continue
-            if part.get('Content-Disposition') is None:
-                continue
+                        if "attachment" in content_disposition:
+                            filename = part.get_filename()
 
-            filename = part.get_filename()
-            if filename:
-                filename = decode_header(filename)[0][0]
-                if isinstance(filename, bytes):
-                    filename = filename.decode()
-                if filename.lower().endswith(".pdf"):
-                    filepath = os.path.join(DOWNLOAD_FOLDER, filename)
-                    with open(filepath, "wb") as f:
-                        f.write(part.get_payload(decode=True))
-                    print(f"Salvo: {filepath}")
+                            try:
+                                filename = filename.decode("utf-8")
+                            except UnicodeDecodeError:
+                                filename = filename.decode("latin-1", errors="ignore")
+                                print(f"Problema ao decodificar o nome do arquivo: {filename}")
+
+                            with open(f"./downloads/{filename}", "wb") as f:
+                                f.write(part.get_payload(decode=True))
 
 def main():
-    mail = connect_mailbox()
-    fetch_emails(mail)
-    mail.logout()
+    imap = imaplib.IMAP4_SSL("imap.gmail.com")
+    imap.login("timesync.upload@gmail.com", "iqlbpslhqmekvted")
+
+    imap.select("inbox")
+
+    while True:
+        fetch_emails(imap)
+        time.sleep(300)
+
+    imap.close()
+    imap.logout()
 
 if __name__ == "__main__":
     main()
